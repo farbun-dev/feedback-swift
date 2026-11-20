@@ -47,6 +47,11 @@ Requires iOS 17 or macOS 14. No dependencies.
    Button("Send feedback") { Feedback.show() }
    ```
 
+   Or pass `showOnGesture: true` to `configure`, and no button is needed: a
+   two-finger triple tap anywhere opens the sheet on iOS, and
+   Control-Option-Command-F on macOS. It works alongside the app's own
+   gestures and cancels none of its touches.
+
    `Feedback.isAvailable` is true once someone has signed in on the device, if
    you want to show a button only then. `Feedback.handle(_:)` opens the sheet
    for any `…://feedback` link the app receives.

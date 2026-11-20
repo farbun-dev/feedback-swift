@@ -31,9 +31,11 @@ public enum Feedback {
     ///     for this app and platform in the Feedback dashboard. The default
     ///     is the bundle identifier as a scheme: `com.example.app:/feedback`.
     ///   - commit: the commit the build was made from, when the build knows it.
+    ///   - showOnGesture: opens the sheet on a two-finger triple tap on iOS,
+    ///     or Control-Option-Command-F on macOS, with no button in the app.
     public static func configure(
         appKey: String, baseURL: URL, redirectURI: String? = nil, commit: String? = nil,
-        bundle: Bundle = .main
+        showOnGesture: Bool = false, bundle: Bundle = .main
     ) {
         let build = BuildInfo.of(bundle)
         let redirect = redirectURI ?? "\(build.bundleID ?? "app"):/feedback"
@@ -41,6 +43,7 @@ public enum Feedback {
             api: API(baseURL: baseURL, appKey: appKey), redirectURI: redirect, commit: commit,
             build: build, tokens: KeychainTokenStore(), defaults: .standard)
         session?.start()
+        if showOnGesture { Gesture.shared.start() }
     }
 
     /// Whether someone has signed in on this device and not hidden it.

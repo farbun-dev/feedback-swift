@@ -31,6 +31,21 @@ final class MarkupTests: XCTestCase {
         save("markup.png")
     }
 
+    func testATwoFingerTripleTapOpensTheSheet() {
+        let app = XCUIApplication()
+        app.launch()
+        let window = app.collectionViews.firstMatch
+        XCTAssertTrue(app.buttons["Send feedback"].waitForExistence(timeout: 10))
+
+        // One finger is the app's: nothing opens.
+        window.tap(withNumberOfTaps: 3, numberOfTouches: 1)
+        XCTAssertFalse(app.otherElements["feedback-screenshot"].waitForExistence(timeout: 2))
+
+        window.tap(withNumberOfTaps: 3, numberOfTouches: 2)
+        XCTAssertTrue(app.otherElements["feedback-screenshot"].waitForExistence(timeout: 5))
+        save("gesture.png")
+    }
+
     private func save(_ name: String) {
         guard let folder = ProcessInfo.processInfo.environment["FEEDBACK_SCREENSHOTS"] else { return }
         try? XCUIScreen.main.screenshot().pngRepresentation

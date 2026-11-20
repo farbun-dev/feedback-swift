@@ -9,7 +9,8 @@ struct SampleApp: App {
         // for the app in the Feedback dashboard.
         Feedback.configure(
             appKey: ProcessInfo.processInfo.environment["FEEDBACK_APP_KEY"] ?? "pk_sample",
-            baseURL: URL(string: "https://feedback.farbun.dev")!)
+            baseURL: URL(string: "https://feedback.farbun.dev")!,
+            showOnGesture: true)
     }
 
     var body: some Scene {
