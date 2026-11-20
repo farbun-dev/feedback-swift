@@ -58,8 +58,14 @@ enum Context {
                 }
             }
         #endif
-        if let screen = Screens.current {
+        let screens = Screens.shown(in: window)
+        if let screen = screens.last {
             values["screen_source"] = .string("\(screen.file):\(screen.line)")
+        }
+        if screens.count > 1 {
+            // Several at once, such as a split view: all of them, in order.
+            values["screens"] = .array(
+                screens.map { .string("\($0.name) (\($0.file):\($0.line))") })
         }
         return values
     }

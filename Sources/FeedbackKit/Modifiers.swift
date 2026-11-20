@@ -1,6 +1,12 @@
 import SwiftUI
 
-/// Screens named with `.feedbackScreen(_:)`, the one shown last on top.
+#if canImport(UIKit)
+    import UIKit
+#else
+    import AppKit
+#endif
+
+/// Screens named with `.feedbackScreen(_:)`, each with the window it is in.
 @MainActor
 enum Screens {
     struct Entry: Equatable {
@@ -8,10 +14,23 @@ enum Screens {
         let name: String
         let file: String
         let line: Int
+        var window: ObjectIdentifier?
     }
 
     static var shown: [Entry] = []
-    static var current: Entry? { shown.last }
+
+    /// The named screens in `window`, in the order they appeared. With a
+    /// split view or an inspector several are on screen at once; the last is
+    /// sent as the screen, and all of them in the environment.
+    static func shown(in window: PlatformWindow?) -> [Entry] {
+        guard let window else { return shown }
+        let id = ObjectIdentifier(window)
+        return shown.filter { $0.window == id }
+    }
+
+    static func update(_ id: UUID, _ change: (inout Entry) -> Void) {
+        if let index = shown.firstIndex(where: { $0.id == id }) { change(&shown[index]) }
+    }
 }
 
 extension View {
@@ -42,6 +61,11 @@ private struct ScreenName: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .background(
+                WindowReader { window in
+                    Screens.update(id) { $0.window = window.map(ObjectIdentifier.init) }
+                }
+            )
             .onAppear {
                 Screens.shown.removeAll { $0.id == id }
                 Screens.shown.append(.init(id: id, name: name, file: file, line: line))
@@ -52,18 +76,80 @@ private struct ScreenName: ViewModifier {
 
 private struct Masked: ViewModifier {
     @State private var id = UUID()
+    @State private var window: ObjectIdentifier?
+    @State private var frame: CGRect = .zero
 
     func body(content: Content) -> some View {
         content
             .background(
-                GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { Masks.registered[id] = (nil, proxy.frame(in: .global)) }
-                        .onChange(of: proxy.frame(in: .global)) { _, frame in
-                            Masks.registered[id] = (nil, frame)
-                        }
+                ZStack {
+                    WindowReader { found in
+                        window = found.map(ObjectIdentifier.init)
+                        register()
+                    }
+                    GeometryReader { proxy in
+                        // In SwiftUI, global coordinates are the window's.
+                        Color.clear
+                            .onAppear {
+                                frame = proxy.frame(in: .global)
+                                register()
+                            }
+                            .onChange(of: proxy.frame(in: .global)) { _, new in
+                                frame = new
+                                register()
+                            }
+                    }
                 }
             )
             .onDisappear { Masks.registered[id] = nil }
     }
+
+    private func register() {
+        Masks.registered[id] = (window, frame)
+    }
 }
+
+/// Reports the window a view is in, and again whenever it moves to another.
+private struct WindowReader {
+    let found: @MainActor (PlatformWindow?) -> Void
+}
+
+#if canImport(UIKit)
+    extension WindowReader: UIViewRepresentable {
+        func makeUIView(context: Self.Context) -> Probe {
+            let probe = Probe()
+            probe.found = found
+            probe.isUserInteractionEnabled = false
+            return probe
+        }
+
+        func updateUIView(_ view: Probe, context: Self.Context) { view.found = found }
+
+        final class Probe: UIView {
+            var found: (@MainActor (UIWindow?) -> Void)?
+            override func didMoveToWindow() {
+                super.didMoveToWindow()
+                found?(window)
+            }
+        }
+    }
+#else
+    extension WindowReader: NSViewRepresentable {
+        func makeNSView(context: Self.Context) -> Probe {
+            let probe = Probe()
+            probe.found = found
+            return probe
+        }
+
+        func updateNSView(_ view: Probe, context: Self.Context) { view.found = found }
+
+        final class Probe: NSView {
+            var found: (@MainActor (NSWindow?) -> Void)?
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                found?(window)
+            }
+            override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        }
+    }
+#endif

@@ -21,6 +21,8 @@ import SwiftUI
 @MainActor
 public enum Feedback {
     public static let sdkVersion = "0.1.0"
+    /// The hosted Feedback service.
+    public static let defaultBaseURL = URL(string: "https://feedback.farbun.dev")!
 
     static var session: Session?
 
@@ -30,15 +32,19 @@ public enum Feedback {
     ///   - redirectURI: where the sign-in returns to. It must be registered
     ///     for this app and platform in the Feedback dashboard. The default
     ///     is the bundle identifier as a scheme: `com.example.app:/feedback`.
-    ///   - commit: the commit the build was made from, when the build knows it.
+    ///   - commit: the commit the build was made from. By default it is read
+    ///     from the `FeedbackCommit` key of the app's Info.plist, when set.
     ///   - showOnGesture: opens the sheet on a two-finger triple tap on iOS,
     ///     or Control-Option-Command-F on macOS, with no button in the app.
     public static func configure(
-        appKey: String, baseURL: URL, redirectURI: String? = nil, commit: String? = nil,
+        appKey: String, baseURL: URL = defaultBaseURL, redirectURI: String? = nil,
+        commit: String? = nil,
         showOnGesture: Bool = false, bundle: Bundle = .main
     ) {
         let build = BuildInfo.of(bundle)
         let redirect = redirectURI ?? "\(build.bundleID ?? "app"):/feedback"
+        let commit = commit ?? (bundle.object(forInfoDictionaryKey: "FeedbackCommit") as? String)
+            .flatMap { $0.isEmpty || $0.hasPrefix("$(") ? nil : $0 }
         session = Session(
             api: API(baseURL: baseURL, appKey: appKey), redirectURI: redirect, commit: commit,
             build: build, tokens: KeychainTokenStore(), defaults: .standard)
@@ -60,14 +66,28 @@ public enum Feedback {
         session.present()
     }
 
-    /// Opens the sheet for a `…://feedback` link and answers true, or answers
-    /// false for any other link. Call it from `onOpenURL`.
+    /// Opens the sheet for an app link such as `myapp://feedback`, and answers
+    /// true. Any other link, including every http and https one, is left for
+    /// the app: it answers false.
+    ///
+    /// ```swift
+    /// .onOpenURL { url in
+    ///     if Feedback.handle(url) { return }
+    ///     handleOwnLink(url)
+    /// }
+    /// ```
     @discardableResult
     public static func handle(_ url: URL) -> Bool {
-        guard url.host() == "feedback" || url.path() == "/feedback" || url.path() == "feedback"
-        else { return false }
+        guard isFeedbackLink(url) else { return false }
         show()
         return true
+    }
+
+    nonisolated static func isFeedbackLink(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme != "http", scheme != "https"
+        else { return false }
+        let path = url.path().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return url.host()?.lowercased() == "feedback" && path.isEmpty
     }
 
     /// Stops offering feedback on this device, until `show()` is called again.
@@ -237,7 +257,7 @@ final class Session {
         guard dismissSheet == nil else { return }
         let window = Capture.keyWindow()
         let draft = Draft(
-            screenshot: Capture.screenshot(), screen: Screens.current?.name,
+            screenshot: Capture.screenshot(), screen: Screens.shown(in: window).last?.name,
             environment: Context.environment(window: window, bundleID: build.bundleID))
         let view = ComposeView(session: self, draft: draft) { [weak self] in self?.dismiss() }
         isAvailable = true

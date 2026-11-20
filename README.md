@@ -26,16 +26,18 @@ Requires iOS 17 or macOS 14. No dependencies.
    @main
    struct ShopApp: App {
        init() {
-           Feedback.configure(
-               appKey: "pk_…",
-               baseURL: URL(string: "https://feedback.farbun.dev")!,
-               commit: Bundle.main.object(forInfoDictionaryKey: "GitCommit") as? String)
+           Feedback.configure(appKey: "pk_…")
        }
 
        var body: some Scene {
            WindowGroup {
                ContentView()
-                   .onOpenURL { Feedback.handle($0) }
+                   .onOpenURL { url in
+                       // Before the app's own handling: it answers false for
+                       // any link that is not yourapp://feedback.
+                       if Feedback.handle(url) { return }
+                       handleLink(url)
+                   }
            }
        }
    }
@@ -54,7 +56,16 @@ Requires iOS 17 or macOS 14. No dependencies.
 
    `Feedback.isAvailable` is true once someone has signed in on the device, if
    you want to show a button only then. `Feedback.handle(_:)` opens the sheet
-   for any `…://feedback` link the app receives.
+   for the app's own `yourapp://feedback` link only; http and https links and
+   other paths are left to the app.
+
+   `baseURL` defaults to the hosted service, `https://feedback.farbun.dev`.
+
+   **The commit.** Set it once and every item says which code it is about: add
+   a `FeedbackCommit` key to the app's Info.plist with the value
+   `$(CI_COMMIT)`, which Xcode Cloud defines (unverified: that the variable is
+   expanded in Info.plist; a value still reading `$(…)` is ignored). Or pass
+   `commit:` to `configure`.
 
 ## Naming screens and hiding private views
 
@@ -62,6 +73,10 @@ Requires iOS 17 or macOS 14. No dependencies.
 CheckoutView().feedbackScreen("Checkout")   // sent as the screen, with file and line
 TextField("Card", text: $card).feedbackMasked()   // blanked out of screenshots
 ```
+
+Screens and masks belong to the window they are in. When several named screens
+are visible in the window at once, such as a split view, the last one to appear
+is sent as the screen and all of them are listed in the environment.
 
 UIKit and AppKit apps get their chain of view controllers sent automatically.
 

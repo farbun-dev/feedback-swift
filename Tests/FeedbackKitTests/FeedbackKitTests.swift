@@ -313,3 +313,28 @@ let screenFile = API.File(name: "screen.png", contentType: "image/png", data: Da
     #expect(pixel(15, 2) == [255, 0, 0])
     #expect(pixel(2, 8) == [255, 0, 0])
 }
+
+@Test func onlyAnAppsOwnFeedbackLinkOpensTheSheet() {
+    #expect(Feedback.isFeedbackLink(URL(string: "duck://feedback")!))
+    #expect(Feedback.isFeedbackLink(URL(string: "com.example.shop://feedback/")!))
+    #expect(!Feedback.isFeedbackLink(URL(string: "https://example.com/feedback")!))
+    #expect(!Feedback.isFeedbackLink(URL(string: "https://feedback/")!))
+    #expect(!Feedback.isFeedbackLink(URL(string: "duck://pair/feedback")!))
+    #expect(!Feedback.isFeedbackLink(URL(string: "duck://feedback/settings")!))
+}
+
+#if os(macOS)
+    import AppKit
+
+    @MainActor
+    @Test func aMaskGreysOutOnlyItsOwnWindow() {
+        let first = NSWindow()
+        let second = NSWindow()
+        let id = UUID()
+        Masks.registered[id] = (ObjectIdentifier(first), CGRect(x: 1, y: 2, width: 3, height: 4))
+        defer { Masks.registered[id] = nil }
+
+        #expect(Masks.frames(in: first) == [CGRect(x: 1, y: 2, width: 3, height: 4)])
+        #expect(Masks.frames(in: second).isEmpty)
+    }
+#endif
