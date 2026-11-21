@@ -25,7 +25,8 @@ enum Screens {
     static func shown(in window: PlatformWindow?) -> [Entry] {
         guard let window else { return shown }
         let id = ObjectIdentifier(window)
-        return shown.filter { $0.window == id }
+        // A screen whose window is not known yet counts, as a mask does.
+        return shown.filter { $0.window == nil || $0.window == id }
     }
 
     static func update(_ id: UUID, _ change: (inout Entry) -> Void) {
@@ -58,17 +59,22 @@ private struct ScreenName: ViewModifier {
     let file: String
     let line: Int
     @State private var id = UUID()
+    // Kept here as well as on the entry: on macOS the window can be known
+    // before onAppear adds the entry, and the other way round on iOS.
+    @State private var window: ObjectIdentifier?
 
     func body(content: Content) -> some View {
         content
             .background(
-                WindowReader { window in
-                    Screens.update(id) { $0.window = window.map(ObjectIdentifier.init) }
+                WindowReader { found in
+                    window = found.map(ObjectIdentifier.init)
+                    Screens.update(id) { $0.window = window }
                 }
             )
             .onAppear {
                 Screens.shown.removeAll { $0.id == id }
-                Screens.shown.append(.init(id: id, name: name, file: file, line: line))
+                Screens.shown.append(
+                    .init(id: id, name: name, file: file, line: line, window: window))
             }
             .onDisappear { Screens.shown.removeAll { $0.id == id } }
     }
