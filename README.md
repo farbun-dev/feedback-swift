@@ -125,3 +125,7 @@ cd Examples/Sample && xcodegen && open Sample.xcodeproj
 
 `EndToEndTests` sends one item to a running server when `FEEDBACK_E2E_URL`,
 `FEEDBACK_E2E_KEY` and `FEEDBACK_E2E_TOKEN` are set, and is skipped otherwise.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
