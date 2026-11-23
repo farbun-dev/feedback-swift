@@ -31,9 +31,8 @@ struct CartView: View {
                     LabeledContent("Duck pond", value: "€12.50")
                     LabeledContent("Total", value: "€0.00").bold()
                 }
-                Section("Payment") {
-                    TextField("Card number", text: $card)
-                        .feedbackMasked()
+                Section {
+                    NavigationLink("Payment") { PaymentView(card: $card) }
                 }
                 Section {
                     Button("Send feedback") { Feedback.show() }
@@ -48,5 +47,24 @@ struct CartView: View {
                 Feedback.show()
             }
         }
+    }
+}
+
+struct PaymentView: View {
+    @Binding var card: String
+
+    var body: some View {
+        List {
+            Section("Card") {
+                TextField("Card number", text: $card)
+                    .feedbackMasked()
+                LabeledContent("Expiry", value: "04/29")
+            }
+            Section {
+                Button("Pay €0.00") {}
+            }
+        }
+        .navigationTitle("Payment")
+        .feedbackScreen("Payment")
     }
 }
