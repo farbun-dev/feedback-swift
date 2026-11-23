@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 import Testing
 
@@ -33,20 +32,16 @@ func anItemReachesTheServer() async throws {
     }
     #expect(person.githubLogin == "octo-example")
 
-    let context = CGContext(
-        data: nil, width: 200, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
-        space: CGColorSpace(name: CGColorSpace.sRGB)!,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    context.setFillColor(red: 0.9, green: 0.6, blue: 0.1, alpha: 1)
-    context.fill(CGRect(x: 0, y: 0, width: 200, height: 100))
-    var draft = Draft(
-        screenshot: Screenshot(image: context.makeImage()!, pointSize: CGSize(width: 100, height: 50)),
-        screen: "Checkout", environment: ["os": "macOS test"])
-    draft.marks = [
-        .init(region: .init(x: 0.5, y: 0.5, width: 0, height: 0), comment: "Point"),
-        .init(region: .init(x: 0.1, y: 0.1, width: 0.3, height: 0.2), comment: "Area"),
-    ]
-    draft.overall = "Whole screen"
+    var draft = Draft(environment: ["os": "macOS test"])
+    draft.pin(
+        CGPoint(x: 50, y: 25), on: picture(CGSize(width: 100, height: 50)),
+        key: ScreenKey(owner: nil, name: "Checkout"), screen: "Checkout", source: nil)
+    draft.pin(
+        CGPoint(x: 10, y: 10), on: picture(CGSize(width: 100, height: 50), red: 0),
+        key: ScreenKey(owner: nil, name: "Payment"), screen: "Payment", source: nil)
+    draft.pins[0].comment = "On checkout"
+    draft.pins[1].comment = "On payment"
+    draft.overall = "Whole thing"
 
     let outcome = await session.send(draft)
 

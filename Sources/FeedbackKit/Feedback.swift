@@ -34,7 +34,7 @@ public enum Feedback {
     ///     is the bundle identifier as a scheme: `com.example.app:/feedback`.
     ///   - commit: the commit the build was made from. By default it is read
     ///     from the `FeedbackCommit` key of the app's Info.plist, when set.
-    ///   - showOnGesture: opens the sheet on a two-finger triple tap on iOS,
+    ///   - showOnGesture: shows the orb on a two-finger triple tap on iOS,
     ///     or Control-Option-Command-F on macOS, with no button in the app.
     public static func configure(
         appKey: String, baseURL: URL = defaultBaseURL, redirectURI: String? = nil,
@@ -56,8 +56,9 @@ public enum Feedback {
     /// Use it to decide whether to show a Feedback button.
     public static var isAvailable: Bool { session?.isAvailable ?? false }
 
-    /// Takes a screenshot of the key window and opens the feedback sheet,
-    /// signing in first when needed.
+    /// Shows the feedback orb over the key window. While it is out, a double
+    /// tap (Option-click on macOS) pins a comment to that spot and takes a
+    /// screenshot of the screen; tapping the orb reviews and sends them.
     public static func show() {
         guard let session else {
             assertionFailure("Call Feedback.configure(appKey:baseURL:) first.")
@@ -66,7 +67,7 @@ public enum Feedback {
         session.present()
     }
 
-    /// Opens the sheet for an app link such as `myapp://feedback`, and answers
+    /// Shows the orb for an app link such as `myapp://feedback`, and answers
     /// true. Any other link, including every http and https one, is left for
     /// the app: it answers false.
     ///
@@ -99,7 +100,7 @@ public enum Feedback {
     public static func signOut() async { await session?.signOut() }
 }
 
-/// The SDK's state: the sign-in, the outbox, and what the sheet shows.
+/// The SDK's state: the sign-in, the outbox, and the orb with its pins.
 @MainActor
 @Observable
 final class Session {
@@ -118,7 +119,8 @@ final class Session {
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored let outbox: Outbox
     @ObservationIgnored private let sheet = SignInSheet()
-    @ObservationIgnored private var dismissSheet: (() -> Void)?
+    /// Closes the open sheet, then runs what it is given.
+    @ObservationIgnored private var dismissSheet: ((@escaping @MainActor () -> Void) -> Void)?
 
     var account: Account = .unknown
     var appName: String?
@@ -251,44 +253,77 @@ final class Session {
         return outcome
     }
 
-    // The sheet
+    // The orb and the review sheet
 
+    @ObservationIgnored private(set) var overlay: Overlay?
+
+    /// Shows the orb over the key window. Pins are dropped on it until the
+    /// person sends or discards them from the review sheet.
     func present() {
-        guard dismissSheet == nil else { return }
-        let window = Capture.keyWindow()
-        let draft = Draft(
-            screenshot: Capture.screenshot(), screen: Screens.shown(in: window).last?.name,
-            environment: Context.environment(window: window, bundleID: build.bundleID))
-        let view = ComposeView(session: self, draft: draft) { [weak self] in self?.dismiss() }
         isAvailable = true
+        guard overlay == nil, let window = Capture.keyWindow() else { return }
+        let review = Review(
+            draft: Draft(environment: Context.environment(window: window, bundleID: build.bundleID)))
+        overlay = Overlay(review: review, window: window) { [weak self] in self?.openReview() }
+        Task { await refreshAccount() }
+    }
+
+    /// Opens the review sheet, from the orb.
+    func openReview() {
+        guard dismissSheet == nil, let overlay, let window = overlay.window else { return }
+        let review = overlay.review
+        review.closeBubble()
+        review.reviewing = true
+        let view = ReviewView(
+            session: self, review: review,
+            close: { [weak self] in self?.closeReview() },
+            goTo: { [weak self] id in
+                // Once the sheet is gone: the bubble makes the overlay the
+                // key window, which a sheet still on its way out must not see.
+                self?.closeReview { review.open = id }
+            },
+            finish: { [weak self] in self?.finish() })
         #if canImport(UIKit)
-            guard var top = window?.rootViewController else { return }
-            while let presented = top.presentedViewController { top = presented }
+            guard var top = window.rootViewController else { return }
+            while let presented = top.presentedViewController, !presented.isBeingDismissed {
+                top = presented
+            }
             let host = UIHostingController(rootView: view)
             host.modalPresentationStyle = .pageSheet
             host.isModalInPresentation = true
             top.present(host, animated: true)
-            dismissSheet = { [weak host] in host?.dismiss(animated: true) }
+            dismissSheet = { [weak host] then in
+                guard let host else { return then() }
+                host.dismiss(animated: true) { MainActor.assumeIsolated { then() } }
+            }
         #else
             let host = NSHostingController(rootView: view)
             let panel = NSWindow(contentViewController: host)
             panel.title = "Send feedback"
-            panel.setContentSize(NSSize(width: 720, height: 640))
-            if let window {
-                window.beginSheet(panel)
-                dismissSheet = { [weak window, weak panel] in
-                    if let panel { window?.endSheet(panel) }
-                }
-            } else {
-                panel.makeKeyAndOrderFront(nil)
-                dismissSheet = { [weak panel] in panel?.close() }
+            panel.setContentSize(NSSize(width: 560, height: 640))
+            window.beginSheet(panel)
+            dismissSheet = { [weak window, weak panel] then in
+                if let panel { window?.endSheet(panel) }
+                then()
             }
         #endif
         Task { await refreshAccount() }
     }
 
-    func dismiss() {
-        dismissSheet?()
+    /// Closes the review sheet and leaves the orb out.
+    func closeReview(then: @escaping @MainActor () -> Void = {}) {
+        let review = overlay?.review
+        let dismiss = dismissSheet
         dismissSheet = nil
+        review?.reviewing = false
+        if let dismiss { dismiss(then) } else { then() }
+    }
+
+    /// Puts the orb away, with every pin: after sending, or to discard them.
+    func finish() {
+        dismissSheet?({})
+        dismissSheet = nil
+        overlay?.remove()
+        overlay = nil
     }
 }

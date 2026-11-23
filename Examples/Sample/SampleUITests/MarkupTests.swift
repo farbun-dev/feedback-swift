@@ -1,54 +1,110 @@
 import XCTest
 
-/// Marks the screenshot the way a person would, and keeps a picture of the
-/// result in the test's output folder (`FEEDBACK_SCREENSHOTS`).
+/// Pins comments the way a person would, and keeps pictures of the orb, a
+/// pin with its bubble, and the review sheet in the test's output folder
+/// (`FEEDBACK_SCREENSHOTS`).
 final class MarkupTests: XCTestCase {
-    func testTapAndDragAddMarksWithComments() throws {
+    func testPinsOnTwoScreensAreReviewedTogether() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-showFeedback"]
         app.launch()
 
-        let shot = app.otherElements["feedback-screenshot"]
-        XCTAssertTrue(shot.waitForExistence(timeout: 10))
+        let orb = app.buttons["feedback-orb"]
+        XCTAssertTrue(orb.waitForExistence(timeout: 10))
+        save("orb.png")
 
-        // Drag first: once a comment field has focus, the form scrolls the
-        // top of the screenshot under the navigation bar.
-        let start = shot.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.08))
-        let end = shot.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.14))
-        start.press(forDuration: 0.1, thenDragTo: end)
-        let first = app.textFields["What about this mark?"].firstMatch
-        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        // A double tap on the total pins a comment there.
+        app.staticTexts["Total, €0.00"].doubleTap()
+        let bubble = app.textViews["feedback-pin-comment"].firstMatch
+        XCTAssertTrue(waitForComment(app), "the bubble opens")
+        XCTAssertTrue(app.buttons["feedback-pin-1"].exists)
+        app.typeText("Total should be €16.50")
+        save("pin.png")
+        app.buttons["Done"].tap()
+        XCTAssertFalse(bubble.exists)
+        XCTAssertEqual(orb.value as? String, "1 pin")
+
+        // The app still works: on to Payment, where pin 1 is not shown.
+        app.buttons["Payment"].tap()
+        XCTAssertTrue(app.navigationBars["Payment"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["feedback-pin-1"].waitForExistence(timeout: 1))
+        app.staticTexts["Expiry, 04/29"].doubleTap()
+        XCTAssertTrue(waitForComment(app))
+        app.typeText("Pay button shows €0.00")
+        app.buttons["Done"].tap()
+
+        // An empty pin goes when its bubble closes.
+        app.buttons["Pay €0.00"].doubleTap()
+        XCTAssertTrue(waitForComment(app))
+        XCTAssertTrue(app.buttons["feedback-pin-3"].exists)
+        app.buttons["Done"].tap()
+        XCTAssertFalse(app.buttons["feedback-pin-3"].waitForExistence(timeout: 1))
+        XCTAssertEqual(orb.value as? String, "2 pins")
+
+        // Back on Checkout, its pin is there again and Payment's is not.
+        app.navigationBars.buttons["Checkout"].tap()
+        XCTAssertTrue(app.buttons["feedback-pin-1"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["feedback-pin-2"].exists)
+
+        // Dragged across, the orb snaps to the left side.
+        let width = app.windows.firstMatch.frame.width
+        orb.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.5)))
         sleep(1)
-        app.typeText("Title is too big")
+        XCTAssertLessThan(orb.frame.midX, width / 4)
+        save("orb-left.png")
 
-        shot.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).tap()
-        // Its comment field scrolls into view above the keyboard, focused.
-        XCTAssertTrue(app.buttons["Remove mark 2"].waitForExistence(timeout: 5))
+        // The orb opens the review: one screenshot per screen.
+        orb.tap()
+        XCTAssertTrue(app.buttons["feedback-comment-2"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.otherElements.matching(identifier: "feedback-screenshot").count, 2)
+        XCTAssertTrue(app.staticTexts["Anything else"].exists || app.staticTexts["ANYTHING ELSE"].exists)
         sleep(1)
-        app.typeText("This total should be 16.50")
-        for text in ["Title is too big", "This total should be 16.50"] {
-            let typed = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "value == %@", text))
-            XCTAssertTrue(typed.firstMatch.waitForExistence(timeout: 5), text)
-        }
+        save("review.png")
 
-        XCTAssertTrue(app.buttons["Remove mark 2"].exists)
-        save("markup.png")
+        // A comment takes you back to it.
+        app.buttons["feedback-comment-1"].tap()
+        XCTAssertTrue(waitForComment(app))
+        XCTAssertEqual(bubbleText(app), "Total should be €16.50")
+        app.buttons["Done"].tap()
+
+        // Discarding puts the orb away, with every pin.
+        orb.tap()
+        XCTAssertTrue(app.buttons["feedback-comment-1"].waitForExistence(timeout: 5))
+        // The form builds its rows as they scroll into view.
+        let discard = app.buttons["Discard"].firstMatch
+        for _ in 0..<5 where !(discard.exists && discard.isHittable) { app.swipeUp() }
+        discard.tap()
+        let confirm = app.sheets.buttons["Discard"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(orb.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["feedback-pin-1"].exists)
     }
 
-    func testATwoFingerTripleTapOpensTheSheet() {
+    func testATwoFingerTripleTapShowsTheOrb() {
         let app = XCUIApplication()
         app.launch()
         let window = app.collectionViews.firstMatch
         XCTAssertTrue(app.buttons["Send feedback"].waitForExistence(timeout: 10))
 
-        // One finger is the app's: nothing opens.
+        // One finger is the app's: nothing shows.
         window.tap(withNumberOfTaps: 3, numberOfTouches: 1)
-        XCTAssertFalse(app.otherElements["feedback-screenshot"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.buttons["feedback-orb"].waitForExistence(timeout: 2))
 
         window.tap(withNumberOfTaps: 3, numberOfTouches: 2)
-        XCTAssertTrue(app.otherElements["feedback-screenshot"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["feedback-orb"].waitForExistence(timeout: 5))
         save("gesture.png")
+    }
+
+    /// Whether a pin's comment bubble is open.
+    private func waitForComment(_ app: XCUIApplication) -> Bool {
+        app.descendants(matching: .any)["feedback-pin-comment"].waitForExistence(timeout: 5)
+    }
+
+    private func bubbleText(_ app: XCUIApplication) -> String? {
+        app.descendants(matching: .any)["feedback-pin-comment"].firstMatch.value as? String
     }
 
     private func save(_ name: String) {

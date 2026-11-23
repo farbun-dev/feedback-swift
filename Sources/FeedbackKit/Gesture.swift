@@ -6,7 +6,7 @@ import Foundation
     import AppKit
 #endif
 
-/// Opens the sheet without a button: a two-finger triple tap anywhere on
+/// Shows the orb without a button: a two-finger triple tap anywhere on
 /// iOS, Control-Option-Command-F on macOS.
 ///
 /// A one-finger triple tap would clash with the app's own taps and with text
@@ -63,6 +63,11 @@ final class Gesture: NSObject {
             event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 == [.control, .option, .command]
                 && event.charactersIgnoringModifiers?.lowercased() == "f"
+        }
+
+        /// Option-click, which drops a pin while the orb is out.
+        nonisolated static func isPinClick(_ event: NSEvent) -> Bool {
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.option]
         }
     #endif
 }

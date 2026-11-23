@@ -1,8 +1,8 @@
 # Feedback for iOS and macOS
 
 The Swift SDK for [Feedback](https://feedback.farbun.dev): people on your team
-mark up a screenshot of your app, write a comment on each mark, and the item
-lands in the Feedback inbox, and from there in your GitHub issues.
+pin comments to the screens of your app as they use it, and the item lands in
+the Feedback inbox, and from there in your GitHub issues.
 
 It does nothing for ordinary users of your app. It shows itself only when the
 app asks, such as from a debug menu or a `yourapp://feedback` link, and only
@@ -50,7 +50,7 @@ Requires iOS 17 or macOS 14. No dependencies.
    ```
 
    Or pass `showOnGesture: true` to `configure`, and no button is needed: a
-   two-finger triple tap anywhere opens the sheet on iOS, and
+   two-finger triple tap anywhere shows the orb on iOS, and
    Control-Option-Command-F on macOS. It works alongside the app's own
    gestures and cancels none of its touches.
 
@@ -58,6 +58,28 @@ Requires iOS 17 or macOS 14. No dependencies.
    you want to show a button only then. `Feedback.handle(_:)` opens the sheet
    for the app's own `yourapp://feedback` link only; http and https links and
    other paths are left to the app.
+
+## The orb
+
+`show()` puts a small floating orb over the app, and the app stays usable
+underneath it:
+
+- **Double tap** anything (on macOS, **Option-click**) to drop a numbered pin
+  there and write a comment in the bubble next to it. A screenshot of the
+  screen is taken at that moment; pins on the same unchanged screen share one.
+  Tap a pin to reopen its comment. A pin left empty is removed when its bubble
+  closes.
+- Move on to other screens and pin there too. Pins are shown only on the
+  screen they belong to.
+- **Drag** the orb out of the way; it snaps to the nearest side. Its badge
+  counts the pins.
+- **Tap** the orb to review: the pins grouped by screen with each screenshot,
+  a comment about the whole thing, and Send or Discard. Tapping a comment
+  takes you back to it. After sending, the orb goes away.
+
+While the orb is out, double tap belongs to the SDK: the app's own double taps
+stop working, and its single taps wait a moment to rule one out. The orb, pins
+and bubbles never appear in the screenshots.
 
    `baseURL` defaults to the hosted service, `https://feedback.farbun.dev`.
 
@@ -85,11 +107,12 @@ UIKit and AppKit apps get their chain of view controllers sent automatically.
 One upload to `POST /sdk/v1/apps/<key>/feedback` (version 1 of the request,
 described in the service's `web/README.md`):
 
-- the key window's screenshot, drawn by the app itself, so no screen-recording
-  permission is asked for;
-- each mark's comment and region, as fractions of the screenshot, and the
-  comment about the whole screen;
-- the screen's name and source location, app version, build number, bundle
+- a screenshot of each screen that has a pin with a comment (up to 19 pins,
+  scaled down together when very large), drawn by the app itself, so no
+  screen-recording permission is asked for;
+- each pin's comment and point, as fractions of its screenshot, with that
+  screen's name and source location, and the comment about the whole thing;
+- the first screen's name, app version, build number, bundle
   identifier, and the commit when you pass one;
 - system version, device model, window size and scale, locale, light or dark
   appearance, and text size.
@@ -116,8 +139,8 @@ swift test                              # unit tests, on macOS
 xcodebuild test -scheme Feedback -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-`Examples/Sample` is a small app for both platforms, with a UI test that marks
-up a screenshot. Generate its project with [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+`Examples/Sample` is a small app for both platforms, with a UI test that pins
+comments on two screens and reviews them. Generate its project with [XcodeGen](https://github.com/yonaskolb/XcodeGen):
 
 ```sh
 cd Examples/Sample && xcodegen && open Sample.xcodeproj

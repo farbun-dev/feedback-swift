@@ -1,6 +1,7 @@
 import CoreGraphics
 import CryptoKit
 import Foundation
+import ImageIO
 import Testing
 
 @testable import FeedbackKit
@@ -102,27 +103,119 @@ let screenFile = API.File(name: "screen.png", contentType: "image/png", data: Da
     #expect(region == ["x": 0.1, "y": 0.2, "width": 0, "height": 0])
 }
 
-@Test func aDraftSendsEachMarkWithTextThenTheOverallComment() {
-    var draft = Draft(screenshot: nil, screen: "Cart", environment: [:])
-    draft.marks = [
-        .init(region: .init(x: 0, y: 0, width: 0.5, height: 0.5), comment: "  First  "),
-        .init(region: .init(x: 0.5, y: 0.5, width: 0, height: 0), comment: "   "),
-    ]
-    draft.overall = "Slow overall"
-
-    let comments = draft.annotations
-
-    #expect(comments.map(\.comment) == ["First", "Slow overall"])
-    #expect(comments[0].region == .init(x: 0, y: 0, width: 0.5, height: 0.5))
-    #expect(comments[1].region == nil)
-    // Without a screenshot, nothing names one.
-    #expect(comments.allSatisfy { $0.screenshot == nil })
+/// A picture of `size` points at a scale of 2, filled with one colour.
+func picture(_ size: CGSize = CGSize(width: 100, height: 200), red: CGFloat = 1) -> Screenshot {
+    let context = CGContext(
+        data: nil, width: Int(size.width * 2), height: Int(size.height * 2), bitsPerComponent: 8,
+        bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    context.setFillColor(red: red, green: 0.5, blue: 0, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: size.width * 2, height: size.height * 2))
+    return Screenshot(image: context.makeImage()!, pointSize: size)
 }
 
-@Test func anEmptyDraftCannotBeSent() {
-    var draft = Draft(screenshot: nil, screen: nil, environment: [:])
-    draft.marks = [.init(region: .init(x: 0, y: 0, width: 0, height: 0))]
-    #expect(!draft.canSend)
+final class Owner {}
+
+@Test func pinsOnAnUnchangedScreenShareItsScreenshot() {
+    let checkout = ScreenKey(owner: nil, name: "Checkout")
+    var draft = Draft(environment: [:])
+
+    draft.pin(CGPoint(x: 10, y: 20), on: picture(), key: checkout, screen: "Checkout", source: nil)
+    draft.pin(CGPoint(x: 50, y: 50), on: picture(), key: checkout, screen: "Checkout", source: nil)
+    // The same screen, changed since: a screenshot of its own.
+    draft.pin(CGPoint(x: 5, y: 5), on: picture(red: 0), key: checkout, screen: "Checkout", source: nil)
+    // Another screen that happens to look the same: never shared.
+    draft.pin(
+        CGPoint(x: 5, y: 5), on: picture(), key: ScreenKey(owner: nil, name: "Payment"),
+        screen: "Payment", source: nil)
+
+    #expect(draft.shots.count == 3)
+    #expect(draft.pins[0].shot == draft.pins[1].shot)
+    #expect(draft.pins[1].shot != draft.pins[2].shot)
+    #expect(draft.pins[0].point == .init(x: 0.1, y: 0.1, width: 0, height: 0))
+}
+
+@Test func eachCommentNamesItsScreensFileAndOnlyUsedFilesAreSent() throws {
+    var draft = Draft(environment: [:])
+    let checkout = ScreenKey(owner: nil, name: "Checkout")
+    let payment = ScreenKey(owner: nil, name: "Payment")
+    draft.pin(CGPoint(x: 10, y: 20), on: picture(), key: checkout, screen: "Checkout", source: "A.swift:3")
+    // Pinned, but without a comment: its screenshot is not sent.
+    draft.pin(CGPoint(x: 10, y: 20), on: picture(red: 0.2), key: checkout, screen: "Checkout", source: nil)
+    draft.pin(CGPoint(x: 50, y: 100), on: picture(), key: payment, screen: "Payment", source: nil)
+    draft.pins[0].comment = "  Total is wrong "
+    draft.pins[1].comment = "   "
+    draft.pins[2].comment = "Card cut off"
+    draft.overall = "Slow overall"
+
+    let (payload, files) = draft.request(build: BuildInfo(), commit: nil)
+
+    #expect(files.map(\.name) == ["screen-1.png", "screen-2.png"])
+    #expect(payload.annotations.map(\.comment) == ["Total is wrong", "Card cut off", "Slow overall"])
+    #expect(payload.annotations.map(\.screenshot) == ["screen-1.png", "screen-2.png", nil])
+    #expect(payload.annotations[1].region == .init(x: 0.5, y: 0.5, width: 0, height: 0))
+    #expect(payload.annotations[0].target?["screen_source"] == "A.swift:3")
+    #expect(payload.annotations[1].target?["screen"] == "Payment")
+    #expect(payload.annotations[2].region == nil)
+    #expect(payload.screen == "Checkout")
+}
+
+@Test func manyScreenshotsAreScaledToFitTheServersPixelLimit() throws {
+    var draft = Draft(environment: [:])
+    for index in 0..<3 {
+        draft.pin(
+            CGPoint(x: 1, y: 1), on: picture(), key: ScreenKey(owner: nil, name: "\(index)"),
+            screen: nil, source: nil)
+        draft.pins[index].comment = "Comment \(index)"
+    }
+    // 3 × 200 × 400 = 240,000 pixels, against a limit of 60,000: half as wide.
+    let (_, files) = draft.request(build: BuildInfo(), commit: nil, maxPixels: 60_000)
+
+    for file in files {
+        let source = try #require(CGImageSourceCreateWithData(file.data as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(image.width == 100 && image.height == 200)
+    }
+    #expect(files.count == 3)
+}
+
+@Test func aScreenMatchesItsOwnerAndByNameOnceTheOwnerIsGone() {
+    var owner: Owner? = Owner()
+    let other = Owner()
+    let key = ScreenKey(owner: owner, name: "Checkout")
+
+    #expect(key.matches(ScreenKey(owner: owner, name: "Checkout")))
+    #expect(!key.matches(ScreenKey(owner: other, name: "Payment")))
+    // Pushed over by an unnamed screen: not this one.
+    #expect(!key.matches(ScreenKey(owner: other, name: nil)))
+    owner = nil
+    // Went back and came again: a new view controller, the same name.
+    #expect(key.matches(ScreenKey(owner: other, name: "Checkout")))
+    #expect(!ScreenKey(owner: nil, name: nil).matches(ScreenKey(owner: other, name: "Checkout")))
+}
+
+@MainActor
+@Test func anEmptyPinGoesWhenItsBubbleClosesAndCannotBeSent() {
+    let review = Review(draft: Draft(environment: [:]))
+    let key = ScreenKey(owner: nil, name: "Checkout")
+    review.pin(at: CGPoint(x: 10, y: 10), on: picture(), key: key, screen: nil, source: nil)
+    #expect(!review.draft.canSend)
+    review.closeBubble()
+    #expect(review.draft.pins.isEmpty && review.draft.shots.isEmpty)
+
+    review.pin(at: CGPoint(x: 10, y: 10), on: picture(), key: key, screen: nil, source: nil)
+    review.comment(of: review.open!).wrappedValue = "Kept"
+    review.closeBubble()
+    #expect(review.draft.pins.map(\.comment) == ["Kept"])
+    #expect(review.open == nil)
+}
+
+@Test func atMostNineteenPinsLeaveRoomForTheOverallComment() {
+    var draft = Draft(environment: [:])
+    for _ in 0..<25 {
+        draft.pin(CGPoint(x: 1, y: 1), on: picture(), key: ScreenKey(owner: nil, name: nil), screen: nil, source: nil)
+    }
+    #expect(draft.pins.count == 19)
 }
 
 @Test func aRegionIsAFractionOfThePictureClampedToIt() {
@@ -314,7 +407,7 @@ let screenFile = API.File(name: "screen.png", contentType: "image/png", data: Da
     #expect(pixel(2, 8) == [255, 0, 0])
 }
 
-@Test func onlyAnAppsOwnFeedbackLinkOpensTheSheet() {
+@Test func onlyAnAppsOwnFeedbackLinkShowsTheOrb() {
     #expect(Feedback.isFeedbackLink(URL(string: "duck://feedback")!))
     #expect(Feedback.isFeedbackLink(URL(string: "com.example.shop://feedback/")!))
     #expect(!Feedback.isFeedbackLink(URL(string: "https://example.com/feedback")!))

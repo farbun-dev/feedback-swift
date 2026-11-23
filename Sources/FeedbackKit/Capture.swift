@@ -29,25 +29,53 @@ struct Screenshot: @unchecked Sendable {
         CGImageDestinationAddImage(destination, image, nil)
         return CGImageDestinationFinalize(destination) ? data as Data : nil
     }
+
+    /// Whether `other` is the same picture, pixel for pixel.
+    func hasSamePixels(as other: Screenshot) -> Bool {
+        guard image.width == other.image.width, image.height == other.image.height,
+            image.bytesPerRow == other.image.bytesPerRow,
+            image.bitmapInfo == other.image.bitmapInfo,
+            let mine = image.dataProvider?.data, let theirs = other.image.dataProvider?.data
+        else { return false }
+        return (mine as Data) == (theirs as Data)
+    }
+
+    /// The same picture with `factor` times as many pixels across and down.
+    func scaled(by factor: Double) -> Screenshot? {
+        let width = max(1, Int((Double(image.width) * factor).rounded()))
+        let height = max(1, Int((Double(image.height) * factor).rounded()))
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage().map { Screenshot(image: $0, pointSize: pointSize) }
+    }
 }
 
 @MainActor
 enum Capture {
+    /// The app's key window. Never the SDK's own overlay, which holds the
+    /// orb and pins.
     static func keyWindow() -> PlatformWindow? {
         #if canImport(UIKit)
             let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-            let windows =
-                scenes.filter { $0.activationState == .foregroundActive }.flatMap(\.windows)
-                + scenes.flatMap(\.windows)
+            let windows = (scenes.filter { $0.activationState == .foregroundActive }.flatMap(\.windows)
+                + scenes.flatMap(\.windows)).filter { !($0 is OverlayWindow) }
             return windows.first(where: \.isKeyWindow) ?? windows.first
         #else
             return NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: \.isVisible)
         #endif
     }
 
-    /// The key window as it looks now, with masked views blanked out.
-    static func screenshot() -> Screenshot? {
-        guard let window = keyWindow() else { return nil }
+    /// The window as it looks now, with masked views blanked out. The orb,
+    /// pins and bubbles are never in it: on iOS they are in a window of their
+    /// own, and on macOS outside the content view.
+    static func screenshot(of window: PlatformWindow?) -> Screenshot? {
+        guard let window else { return nil }
         #if canImport(UIKit)
             let bounds = window.bounds
             let format = UIGraphicsImageRendererFormat(for: window.traitCollection)
