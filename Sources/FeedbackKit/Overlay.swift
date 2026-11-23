@@ -43,15 +43,15 @@ final class Overlay: NSObject {
             host.rootViewController = controller
             host.isHidden = false
             self.host = host
-            // A double tap drops a pin. The app's touches wait to see whether
-            // a second tap follows, and are cancelled when one does, so the
-            // first tap of a pin does not also press what is under it.
+            // A double tap drops a pin. The app's touches and taps wait to see
+            // whether a second tap follows, and are cancelled when one does,
+            // so the first tap of a pin does not also press what is under it.
             let tap = UITapGestureRecognizer(target: self, action: #selector(doubleTapped(_:)))
             tap.numberOfTapsRequired = 2
             tap.numberOfTouchesRequired = 1
-            tap.delaysTouchesEnded = true
+            tap.delaysTouchesBegan = true
             tap.cancelsTouchesInView = true
-            tap.delegate = Gesture.shared
+            tap.delegate = self
             window.addGestureRecognizer(tap)
             pinTap = tap
             // The bubble's text field needs the keyboard, which goes to the
@@ -215,6 +215,21 @@ final class Overlay: NSObject {
 }
 
 #if canImport(UIKit)
+    extension Overlay: UIGestureRecognizerDelegate {
+        /// The app's own taps under the pin tap, such as a SwiftUI button's,
+        /// wait for it to fail. Scrolling, dragging and long presses do not,
+        /// so they start as soon as the finger moves or holds, and neither do
+        /// the window's own, such as the system's edge gestures.
+        nonisolated func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy other: UIGestureRecognizer
+        ) -> Bool {
+            !(other.view is UIWindow || other is UIPanGestureRecognizer
+                || other is UIPinchGestureRecognizer || other is UIRotationGestureRecognizer
+                || other is UILongPressGestureRecognizer)
+        }
+    }
+
     /// The orb's window. Touches go to the app under it, except on the orb,
     /// a pin, or anywhere while a bubble is open.
     final class OverlayWindow: UIWindow {

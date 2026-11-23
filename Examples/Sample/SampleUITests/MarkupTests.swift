@@ -83,6 +83,22 @@ final class MarkupTests: XCTestCase {
         XCTAssertFalse(app.buttons["feedback-pin-1"].exists)
     }
 
+    func testADoubleTapOnSomethingTappablePinsItWithoutPressingIt() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-showFeedback"]
+        app.launch()
+        XCTAssertTrue(app.buttons["feedback-orb"].waitForExistence(timeout: 10))
+
+        app.buttons["Payment"].doubleTap()
+        XCTAssertTrue(waitForComment(app), "the bubble opens")
+        XCTAssertFalse(app.navigationBars["Payment"].exists, "the link is not followed")
+        app.buttons["Done"].tap()
+
+        // A single tap is still the app's, once the double tap gives up.
+        app.buttons["Payment"].tap()
+        XCTAssertTrue(app.navigationBars["Payment"].waitForExistence(timeout: 5))
+    }
+
     func testATwoFingerTripleTapShowsTheOrb() {
         let app = XCUIApplication()
         app.launch()
