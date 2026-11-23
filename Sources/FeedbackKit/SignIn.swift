@@ -69,9 +69,11 @@ final class SignInSheet: NSObject, ASWebAuthenticationPresentationContextProvidi
     func run(_ url: URL, callbackScheme: String) async throws -> URL {
         defer { session = nil }
         return try await withCheckedThrowingContinuation { continuation in
+            // AuthenticationServices calls this on its own XPC queue, so it
+            // must not inherit the main actor from this method.
             let session = ASWebAuthenticationSession(
                 url: url, callbackURLScheme: callbackScheme
-            ) { callback, error in
+            ) { @Sendable callback, error in
                 if let callback {
                     continuation.resume(returning: callback)
                 } else if let error = error as? ASWebAuthenticationSessionError,
