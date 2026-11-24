@@ -220,7 +220,7 @@ final class Overlay: NSObject {
         /// wait for it to fail. Scrolling, dragging and long presses do not,
         /// so they start as soon as the finger moves or holds, and neither do
         /// the window's own, such as the system's edge gestures.
-        nonisolated func gestureRecognizer(
+        func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldBeRequiredToFailBy other: UIGestureRecognizer
         ) -> Bool {
