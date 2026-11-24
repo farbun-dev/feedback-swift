@@ -69,13 +69,16 @@ underneath it:
   screen is taken at that moment; pins on the same unchanged screen share one.
   Tap a pin to reopen its comment. A pin left empty is removed when its bubble
   closes.
+- A pin dropped on a list or other scrolling content moves with it, and is
+  hidden while it is scrolled out of sight.
 - Move on to other screens and pin there too. Pins are shown only on the
   screen they belong to.
 - **Drag** the orb out of the way; it snaps to the nearest side. Its badge
   counts the pins.
 - **Tap** the orb to review: the pins grouped by screen with each screenshot,
   a comment about the whole thing, and Send or Discard. Tapping a comment
-  takes you back to it. After sending, the orb goes away.
+  takes you back to it, scrolling its list back if it has to. After sending,
+  the orb goes away.
 
 While the orb is out, double tap belongs to the SDK: the app's own double taps
 stop working, and its single taps wait a moment to rule one out. The orb, pins

@@ -30,6 +30,11 @@ final class Review {
     var keyboardTop: CGFloat?
     /// Counts the pins dropped, for the flash that shows a screenshot was taken.
     var flashes = 0
+    /// Where the pins dropped on scrolling content are now, as it scrolls.
+    /// Other pins stay where they were dropped.
+    var positions: [Draft.Pin.ID: CGPoint] = [:]
+    /// Pins whose content has scrolled out of sight, which are not drawn.
+    var outOfSight: Set<Draft.Pin.ID> = []
 
     @ObservationIgnored var bubbleChanged: ((Bool) -> Void)?
 
@@ -37,24 +42,25 @@ final class Review {
         self.draft = draft
     }
 
-    /// The pins of the screen in view.
+    /// The pins of the screen in view, but for those scrolled out of sight.
     var shown: [Draft.Pin] {
-        draft.pins.filter { isShown($0) }
+        draft.pins.filter { isShown($0) && !outOfSight.contains($0.id) }
     }
 
     /// The pins drawn: those of the screen in view, and the open one, which
     /// may have been reopened from the review sheet while another screen is
     /// in view. The SDK cannot take the app back to it.
     var visible: [Draft.Pin] {
-        draft.pins.filter { isShown($0) || $0.id == open }
+        draft.pins.filter { (isShown($0) && !outOfSight.contains($0.id)) || $0.id == open }
     }
 
+    /// Whether `pin` belongs to the screen in view.
     func isShown(_ pin: Draft.Pin) -> Bool {
         draft.shot(pin.shot)?.key.matches(current) ?? false
     }
 
     func centre(of pin: Draft.Pin) -> CGPoint {
-        CGPoint(x: pin.point.x * size.width, y: pin.point.y * size.height)
+        positions[pin.id] ?? CGPoint(x: pin.point.x * size.width, y: pin.point.y * size.height)
     }
 
     var orbCentre: CGPoint {
@@ -79,15 +85,17 @@ final class Review {
 
     // Changes
 
+    @discardableResult
     func pin(
         at point: CGPoint, on screenshot: Screenshot, key: ScreenKey, screen: String?,
         source: String?
-    ) {
+    ) -> Draft.Pin.ID? {
         guard
             let id = draft.pin(point, on: screenshot, key: key, screen: screen, source: source)
-        else { return }
+        else { return nil }
         flashes += 1
         open = id
+        return id
     }
 
     /// Closes the open bubble. A pin left without a comment is removed.

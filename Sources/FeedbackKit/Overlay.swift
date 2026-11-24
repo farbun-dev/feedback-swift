@@ -15,10 +15,21 @@ import SwiftUI
 /// while a screenshot is drawn.
 @MainActor
 final class Overlay: NSObject {
+    /// A point on the content of the scroll view a pin was dropped on, so
+    /// that the pin moves with what it was dropped on as that scrolls.
+    struct Anchor {
+        /// The scroll view on iOS, its document view on macOS: a view whose
+        /// own coordinates move with the content.
+        weak var view: PlatformView?
+        /// In the view's own coordinates.
+        let point: CGPoint
+    }
+
     let review: Review
     /// The app's window the orb is over.
     private(set) weak var window: PlatformWindow?
-    private var timer: Timer?
+    private var anchors: [Draft.Pin.ID: Anchor] = [:]
+    private var link: CADisplayLink?
     private var observers: [NSObjectProtocol] = []
     #if canImport(UIKit)
         private var host: OverlayWindow?
@@ -56,8 +67,13 @@ final class Overlay: NSObject {
             pinTap = tap
             // The bubble's text field needs the keyboard, which goes to the
             // key window. Back to the app's window once it closes.
-            review.bubbleChanged = { [weak host, weak window] open in
-                if open { host?.makeKey() } else { window?.makeKey() }
+            review.bubbleChanged = { [weak self, weak host, weak window] open in
+                if open {
+                    host?.makeKey()
+                    self?.reveal()
+                } else {
+                    window?.makeKey()
+                }
             }
             observers.append(
                 NotificationCenter.default.addObserver(
@@ -72,6 +88,15 @@ final class Overlay: NSObject {
                         review.keyboardTop = top < host.bounds.height ? top : nil
                     }
                 })
+            // The app's content may have moved for the keyboard, taking the
+            // open pin out of sight.
+            observers.append(
+                NotificationCenter.default.addObserver(
+                    forName: UIResponder.keyboardDidChangeFrameNotification, object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.reveal() }
+                })
         #else
             guard let content = window.contentView else { return }
             let host = OverlayHostingView(rootView: view)
@@ -80,6 +105,7 @@ final class Overlay: NSObject {
             host.autoresizingMask = [.width, .height]
             content.addSubview(host)
             self.host = host
+            review.bubbleChanged = { [weak self] open in if open { self?.reveal() } }
             // Option-click drops a pin, as a double click is the app's own.
             monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
                 [weak self] event in
@@ -103,17 +129,36 @@ final class Overlay: NSObject {
             }
         #endif
         refresh()
-        // Which screen is in view, so that only its pins are shown.
-        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
-        }
+        // Every frame, in every run loop mode, so that pins keep up with the
+        // content while it is dragged and while it glides to a stop.
+        #if canImport(UIKit)
+            let link = CADisplayLink(target: self, selector: #selector(refresh))
+        #else
+            let link = window.displayLink(target: self, selector: #selector(refresh))
+        #endif
+        link.add(to: .main, forMode: .common)
+        self.link = link
     }
 
-    func refresh() {
+    /// Which screen is in view, so that only its pins are shown, and where
+    /// those dropped on scrolling content are now.
+    @objc func refresh() {
         guard let window else { return }
         let key = Self.screenKey(of: window)
         if !key.isSame(as: review.current) { review.current = key }
         host?.measure()
+        var positions: [Draft.Pin.ID: CGPoint] = [:]
+        var outOfSight: Set<Draft.Pin.ID> = []
+        for pin in review.draft.pins where review.isShown(pin) {
+            // Once its scroll view is gone, such as when the screen was
+            // closed and opened again, the pin stays where it was dropped.
+            guard let anchor = anchors[pin.id], let view = anchor.view, view.window === window
+            else { continue }
+            positions[pin.id] = location(of: anchor.point, in: view)
+            if !Self.isInSight(anchor.point, in: view) { outOfSight.insert(pin.id) }
+        }
+        if review.positions != positions { review.positions = positions }
+        if review.outOfSight != outOfSight { review.outOfSight = outOfSight }
     }
 
     /// Drops a pin at `point` on the screen in view, and takes its screenshot.
@@ -130,14 +175,16 @@ final class Overlay: NSObject {
         guard let screenshot else { return }
         let key = Self.screenKey(of: window)
         let entry = Screens.shown(in: window).last
-        review.pin(
+        let anchor = anchor(at: point)
+        let id = review.pin(
             at: point, on: screenshot, key: key, screen: entry?.name,
             source: entry.map { "\($0.file):\($0.line)" })
+        if let id, let anchor { anchors[id] = anchor }
     }
 
     func remove() {
-        timer?.invalidate()
-        timer = nil
+        link?.invalidate()
+        link = nil
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
         review.bubbleChanged = nil
@@ -159,6 +206,120 @@ final class Overlay: NSObject {
             guard recognizer.state == .ended, let window, !review.reviewing, review.open == nil
             else { return }
             pin(at: recognizer.location(in: window))
+        }
+
+        /// The innermost scroll view under `point`, and the point on its
+        /// content, when it is in sight there. A text view scrolls only its
+        /// own text, so the pin goes with what the text view is in.
+        private func anchor(at point: CGPoint) -> Anchor? {
+            guard let window else { return nil }
+            var view = window.hitTest(point, with: nil)
+            while let current = view, !(current is UIScrollView) || current is UITextView {
+                view = current.superview
+            }
+            guard let view else { return nil }
+            let local = view.convert(point, from: window)
+            return Self.isInSight(local, in: view) ? Anchor(view: view, point: local) : nil
+        }
+
+        /// Where `point`, in `view`, is in the window now.
+        private func location(of point: CGPoint, in view: UIView) -> CGPoint {
+            view.convert(point, to: nil)
+        }
+
+        /// Whether `point`, in `view`, is inside every scroll view from `view`
+        /// out, and clear of what covers their edges, such as bars.
+        private static func isInSight(_ point: CGPoint, in view: UIView) -> Bool {
+            var current: UIView? = view
+            while let ancestor = current {
+                if let scroll = ancestor as? UIScrollView,
+                    !scroll.bounds.inset(by: scroll.adjustedContentInset)
+                        .contains(view.convert(point, to: scroll))
+                {
+                    return false
+                }
+                current = ancestor.superview
+            }
+            return true
+        }
+    #else
+        /// The innermost scroll view under `point`, and the point on its
+        /// content, when it is in sight there.
+        private func anchor(at point: CGPoint) -> Anchor? {
+            guard let content = window?.contentView else { return nil }
+            let local = CGPoint(
+                x: point.x, y: content.isFlipped ? point.y : content.bounds.height - point.y)
+            let hit = content.hitTest(content.convert(local, to: content.superview))
+            guard let scroll = hit as? NSScrollView ?? hit?.enclosingScrollView,
+                let document = scroll.documentView
+            else { return nil }
+            let onDocument = document.convert(local, from: content)
+            return Self.isInSight(onDocument, in: document)
+                ? Anchor(view: document, point: onDocument) : nil
+        }
+
+        /// Where `point`, in `view`, is over the window's content now, from
+        /// its top left.
+        private func location(of point: CGPoint, in view: NSView) -> CGPoint {
+            guard let content = window?.contentView else { return point }
+            let local = content.convert(point, from: view)
+            return CGPoint(x: local.x, y: content.isFlipped ? local.y : content.bounds.height - local.y)
+        }
+
+        /// Whether `point`, in `view`, is inside every scroll view from `view`
+        /// out, and clear of what covers their edges, such as the toolbar.
+        private static func isInSight(_ point: CGPoint, in view: NSView) -> Bool {
+            var scroll = view.enclosingScrollView
+            while let current = scroll {
+                guard let document = current.documentView,
+                    current.documentVisibleRect.contains(view.convert(point, to: document))
+                else { return false }
+                scroll = current.enclosingScrollView
+            }
+            return true
+        }
+    #endif
+
+    /// Scrolls the open pin back into sight, such as when its comment is
+    /// opened again from the review sheet.
+    private func reveal() {
+        refresh()
+        guard let id = review.open, review.outOfSight.contains(id), let anchor = anchors[id],
+            let view = anchor.view
+        else { return }
+        let point = anchor.point
+        #if canImport(UIKit)
+            // Each scroll view from the pin's out, as they may be nested.
+            var current: UIView? = view
+            while let ancestor = current {
+                if let scroll = ancestor as? UIScrollView {
+                    Self.scroll(scroll, toShow: view.convert(point, to: scroll))
+                }
+                current = ancestor.superview
+            }
+        #else
+            view.scrollToVisible(CGRect(x: point.x - 60, y: point.y - 60, width: 120, height: 120))
+        #endif
+    }
+
+    #if canImport(UIKit)
+        /// Scrolls `scroll` so that `point`, in its own coordinates, is in the
+        /// middle of what is in sight, or as near as the content allows.
+        private static func scroll(_ scroll: UIScrollView, toShow point: CGPoint) {
+            let inset = scroll.adjustedContentInset
+            let visible = scroll.bounds.inset(by: inset)
+            guard !visible.contains(point) else { return }
+            let size = scroll.contentSize
+            var offset = scroll.contentOffset
+            if point.y < visible.minY || point.y > visible.maxY {
+                let highest = max(-inset.top, size.height + inset.bottom - scroll.bounds.height)
+                offset.y = min(max(offset.y + point.y - visible.midY, -inset.top), highest)
+            }
+            if point.x < visible.minX || point.x > visible.maxX {
+                let highest = max(-inset.left, size.width + inset.right - scroll.bounds.width)
+                offset.x = min(max(offset.x + point.x - visible.midX, -inset.left), highest)
+            }
+            scroll.setContentOffset(offset, animated: true)
         }
     #endif
 

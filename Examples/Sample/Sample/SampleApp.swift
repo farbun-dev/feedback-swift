@@ -37,6 +37,12 @@ struct CartView: View {
                 Section {
                     Button("Send feedback") { Feedback.show() }
                 }
+                // Long enough to scroll, for pins on scrolling content.
+                Section("Recently viewed") {
+                    ForEach(1...20, id: \.self) { number in
+                        LabeledContent("Duck no. \(number)", value: "€4.00")
+                    }
+                }
             }
             .navigationTitle("Checkout")
             .feedbackScreen("Checkout")

@@ -6,9 +6,11 @@ import UniformTypeIdentifiers
 #if canImport(UIKit)
     import UIKit
     typealias PlatformWindow = UIWindow
+    typealias PlatformView = UIView
 #else
     import AppKit
     typealias PlatformWindow = NSWindow
+    typealias PlatformView = NSView
 #endif
 
 /// A picture of the app's own window, taken without asking for any

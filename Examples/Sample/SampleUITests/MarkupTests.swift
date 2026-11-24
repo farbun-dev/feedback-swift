@@ -84,6 +84,43 @@ final class MarkupTests: XCTestCase {
         XCTAssertFalse(app.buttons["feedback-pin-1"].exists)
     }
 
+    func testAPinMovesWithTheListItIsOn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-showFeedback"]
+        app.launch()
+        let orb = app.buttons["feedback-orb"]
+        XCTAssertTrue(orb.waitForExistence(timeout: 10))
+
+        let total = app.staticTexts["Total, €0.00"]
+        total.doubleTap()
+        XCTAssertTrue(waitForComment(app))
+        app.typeText("Total should be €16.50")
+        app.buttons["Done"].tap()
+        let pin = app.buttons["feedback-pin-1"]
+        XCTAssertEqual(pin.frame.midY, total.frame.midY, accuracy: 2)
+
+        // Scrolled a little, the pin stays on the total.
+        let start = total.frame.midY
+        drag(app, from: 0.7, to: 0.6)
+        XCTAssertLessThan(total.frame.midY, start - 60, "the list scrolled")
+        XCTAssertEqual(pin.frame.midY, total.frame.midY, accuracy: 2)
+        save("pin-scrolled.png")
+
+        // Scrolled under the bar, the pin is hidden.
+        drag(app, from: 0.8, to: 0.3)
+        XCTAssertTrue(pin.waitForNonExistence(timeout: 2))
+
+        // Opened again from the review, the list scrolls back to it.
+        orb.tap()
+        XCTAssertTrue(app.buttons["feedback-comment-1"].waitForExistence(timeout: 5))
+        app.buttons["feedback-comment-1"].tap()
+        XCTAssertTrue(waitForComment(app))
+        sleep(1)
+        XCTAssertGreaterThan(total.frame.minY, app.navigationBars.firstMatch.frame.maxY)
+        XCTAssertEqual(pin.frame.midY, total.frame.midY, accuracy: 2)
+        save("pin-revealed.png")
+    }
+
     func testADoubleTapOnSomethingTappablePinsItWithoutPressingIt() {
         let app = XCUIApplication()
         app.launchArguments = ["-showFeedback"]
@@ -118,6 +155,17 @@ final class MarkupTests: XCTestCase {
     /// Whether a pin's comment bubble is open.
     private func waitForComment(_ app: XCUIApplication) -> Bool {
         app.descendants(matching: .any)["feedback-pin-comment"].waitForExistence(timeout: 5)
+    }
+
+    /// Scrolls slowly enough that the list stops where the finger lifts,
+    /// away from the orb on the right. `from` and `to` are fractions of the
+    /// window's height.
+    private func drag(_ app: XCUIApplication, from: CGFloat, to: CGFloat) {
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: from)).press(
+            forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: to)),
+            withVelocity: .slow, thenHoldForDuration: 0.3)
+        sleep(1)
     }
 
     private func bubbleText(_ app: XCUIApplication) -> String? {
