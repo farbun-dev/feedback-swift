@@ -51,10 +51,18 @@ jobs:
           set -o pipefail
           xcodebuild build -scheme Sample -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO | xcbeautify
+      # A cold simulator can take longer than XCUITest waits for the first
+      # launch, so it boots before the tests start.
+      - name: Boot the simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | jq -r \
+            '.devices["com.apple.CoreSimulator.SimRuntime.iOS-27-2"][] | select(.name == "iPhone 17") | .udid')
+          xcrun simctl bootstatus "$udid" -b
+          echo "SIMULATOR=$udid" >> "$GITHUB_ENV"
       - name: UI tests
         run: |
           set -o pipefail
-          xcodebuild test -scheme Sample -destination "$DESTINATION" \
+          xcodebuild test -scheme Sample -destination "id=$SIMULATOR" \
             -resultBundlePath "$RUNNER_TEMP/Sample.xcresult" | xcbeautify
       - if: failure()
         uses: actions/upload-artifact@v7
