@@ -42,7 +42,8 @@ final class MarkupTests: XCTestCase {
         XCTAssertEqual(orb.value as? String, "2 pins")
 
         // Back on Checkout, its pin is there again and Payment's is not.
-        app.navigationBars.buttons["Checkout"].tap()
+        // The back button, which iOS 27 does not label "Checkout".
+        app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.buttons["feedback-pin-1"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["feedback-pin-2"].exists)
 

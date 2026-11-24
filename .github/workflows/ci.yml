@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+  DESTINATION: platform=iOS Simulator,name=iPhone 17,OS=27.2
+
+jobs:
+  macos:
+    name: Unit tests (macOS)
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+
+  ios:
+    name: Unit tests (iOS)
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -o pipefail
+          xcodebuild test -scheme Feedback -destination "$DESTINATION" | xcbeautify
+
+  sample:
+    name: Sample app UI tests (iOS)
+    runs-on: xcode-27
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: Examples/Sample
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen && xcodegen
+      - name: Build for macOS
+        run: |
+          set -o pipefail
+          xcodebuild build -scheme Sample -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO | xcbeautify
+      - name: UI tests
+        run: |
+          set -o pipefail
+          xcodebuild test -scheme Sample -destination "$DESTINATION" \
+            -resultBundlePath "$RUNNER_TEMP/Sample.xcresult" | xcbeautify
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-ui-tests
+          path: |
+            ${{ runner.temp }}/Sample.xcresult
+            /tmp/*.png
+          if-no-files-found: ignore
