@@ -565,40 +565,58 @@ struct OverlayView: View {
     }
 }
 
-/// The comment of one pin, next to it.
+/// The comment of one pin, pointing at it.
 private struct Bubble: View {
     let review: Review
     let id: Draft.Pin.ID
     @FocusState private var focused: Bool
+    /// Its height once laid out, which grows with the comment.
+    @State private var height: CGFloat?
 
-    static let width: CGFloat = 240
-    static let height: CGFloat = 112
+    static let width: CGFloat = 264
 
     var body: some View {
-        let origin = origin()
-        VStack(alignment: .leading, spacing: 6) {
+        let width = min(Self.width, review.size.width - 16)
+        let place = placement(width: width)
+        let shape = BubbleShape(tip: place.tip, below: place.below)
+        VStack(alignment: .leading, spacing: 10) {
             TextField("What's wrong here?", text: text, axis: .vertical)
-                .lineLimit(3, reservesSpace: true)
+                .font(.subheadline)
+                .lineLimit(2...6)
                 .textFieldStyle(.plain)
                 .focused($focused)
                 .accessibilityIdentifier("feedback-pin-comment")
             HStack {
-                Button("Delete", role: .destructive) { review.deleteOpen() }
-                    .tint(.red)
+                Button(role: .destructive) {
+                    review.deleteOpen()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .tint(.red)
                 Spacer()
-                Button("Done") { review.closeBubble() }.bold()
+                Button("Done") { review.closeBubble() }
+                    .fontWeight(.semibold)
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
             }
-            .buttonStyle(.borderless)
         }
-        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 8)
-        .frame(width: Self.width)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(.background)
-                .shadow(color: .black.opacity(0.22), radius: 12, y: 8)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.black.opacity(0.1), lineWidth: 0.5))
-        .offset(x: origin.x, y: origin.y)
+        .padding(.leading, 12).padding(.trailing, 10).padding(.top, 12).padding(.bottom, 10)
+        .padding(place.below ? .top : .bottom, BubbleShape.point.height)
+        .frame(width: width)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .background {
+            shape.fill(.thickMaterial)
+                .overlay(shape.stroke(Color.primary.opacity(0.14), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
+        }
+        .offset(x: place.origin.x, y: place.origin.y)
+        // Shown once its height is known, so it does not jump into place.
+        .opacity(height == nil ? 0 : 1)
         .task(id: id) {
             // Once the overlay has become the key window.
             try? await Task.sleep(for: .milliseconds(80))
@@ -606,16 +624,22 @@ private struct Bubble: View {
         }
     }
 
-    /// Below the pin, or above it near the bottom or the keyboard.
-    private func origin() -> CGPoint {
+    /// Below the pin, or above it near the bottom or the keyboard, with
+    /// where along its edge it points at the pin. It has no point when it
+    /// had to be moved away from the pin to fit.
+    private func placement(width: CGFloat) -> (origin: CGPoint, below: Bool, tip: CGFloat?) {
         let size = review.size
-        let point = review.draft.pins.first { $0.id == id }.map(review.centre(of:)) ?? .zero
-        let x = min(max(point.x - Self.width / 2, 8), max(8, size.width - Self.width - 8))
+        let pin = review.draft.pins.first { $0.id == id }.map(review.centre(of:)) ?? .zero
+        let height = height ?? 120
+        let x = min(max(pin.x - width / 2, 8), max(8, size.width - width - 8))
+        let top = review.insets.top + 4
         let bottom = min(size.height - review.insets.bottom, review.keyboardTop ?? .infinity) - 8
-        var y = point.y + 18
-        if y + Self.height > bottom { y = point.y - 18 - Self.height }
-        y = min(y, bottom - Self.height)
-        return CGPoint(x: x, y: max(review.insets.top + 4, y))
+        // The tip of the point, just clear of the pin.
+        let gap = Review.pinSize / 2 + 3
+        let below = pin.y + gap + height <= bottom
+        let ideal = below ? pin.y + gap : pin.y - gap - height
+        let y = max(top, min(ideal, bottom - height))
+        return (CGPoint(x: x, y: y), below, abs(y - ideal) < 1 ? pin.x - x : nil)
     }
 
     /// The comment. Return keeps it and closes the bubble.
@@ -631,5 +655,44 @@ private struct Bubble: View {
                     comment.wrappedValue = new
                 }
             })
+    }
+}
+
+/// A bubble's outline: a rounded rectangle with a point on its top edge, or
+/// its bottom edge, `tip` from its left. The point's room is kept free either
+/// way, along that edge.
+private struct BubbleShape: Shape {
+    /// The point on the edge that faces the pin.
+    static let point = CGSize(width: 18, height: 8)
+
+    let tip: CGFloat?
+    let below: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let point = Self.point
+        let radius: CGFloat = 16
+        var body = rect
+        body.size.height -= point.height
+        if below { body.origin.y += point.height }
+        let path = Path(roundedRect: body, cornerRadius: radius, style: .continuous)
+        guard let tip else { return path }
+        let half = point.width / 2
+        let x = min(max(rect.minX + tip, body.minX + radius + half), body.maxX - radius - half)
+        let base = below ? body.minY : body.maxY
+        let peak = below ? rect.minY : rect.maxY
+        // Overlaps the body a little, so the two join without a seam.
+        let inside: CGFloat = below ? 1 : -1
+        var pointer = Path()
+        pointer.move(to: CGPoint(x: x - half, y: base + inside))
+        pointer.addLine(to: CGPoint(x: x - half, y: base))
+        pointer.addCurve(
+            to: CGPoint(x: x, y: peak), control1: CGPoint(x: x - half / 2, y: base),
+            control2: CGPoint(x: x - 2.5, y: peak))
+        pointer.addCurve(
+            to: CGPoint(x: x + half, y: base), control1: CGPoint(x: x + 2.5, y: peak),
+            control2: CGPoint(x: x + half / 2, y: base))
+        pointer.addLine(to: CGPoint(x: x + half, y: base + inside))
+        pointer.closeSubpath()
+        return path.union(pointer)
     }
 }
